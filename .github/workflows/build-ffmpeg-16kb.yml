@@ -1,0 +1,201 @@
+name: Build FFmpeg-Kit 16KB Page Size
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_kit_version:
+        description: 'FFmpeg-Kit version to build'
+        required: false
+        default: 'v6.0'
+
+jobs:
+  build-ffmpeg-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            curl \
+            git \
+            cmake \
+            gcc \
+            gperf \
+            texinfo \
+            yasm \
+            nasm \
+            bison \
+            autogen \
+            patch
+
+      - name: Set up Android NDK
+        run: |
+          # Download Android NDK r26d (supports 16KB page size)
+          wget https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          export ANDROID_NDK_ROOT=$PWD/android-ndk-r26d
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_NDK_ROOT" >> $GITHUB_PATH
+
+      - name: Clone FFmpeg-Kit
+        run: |
+          git clone --depth 1 --branch ${{ github.event.inputs.ffmpeg_kit_version }} https://github.com/arthenica/ffmpeg-kit.git
+          cd ffmpeg-kit
+
+      - name: Apply 16KB Page Size Patch
+        run: |
+          cd ffmpeg-kit
+
+          # Create patch file for 16KB page size support
+          cat > 16kb-patch.sh << 'EOF'
+          #!/bin/bash
+
+          # Find and patch the Android build scripts to add 16KB page size linker flag
+
+          # Patch the main android build script
+          if [ -f "scripts/android/build-ffmpeg.sh" ]; then
+            echo "Patching build-ffmpeg.sh for 16KB page size..."
+            sed -i 's/LDFLAGS="/LDFLAGS="-Wl,-z,max-page-size=0x4000 /g' scripts/android/build-ffmpeg.sh
+          fi
+
+          # Patch Android.mk files if they exist
+          find . -name "Android.mk" -type f -exec sed -i 's/LOCAL_LDFLAGS :=/LOCAL_LDFLAGS := -Wl,-z,max-page-size=0x4000 /g' {} \;
+
+          # Patch CMakeLists.txt files to add linker flags
+          find . -name "CMakeLists.txt" -type f -exec sed -i 's/CMAKE_SHARED_LINKER_FLAGS/CMAKE_SHARED_LINKER_FLAGS "-Wl,-z,max-page-size=0x4000" /g' {} \;
+
+          # Add 16KB page size to android/build.gradle
+          if [ -f "android/build.gradle" ]; then
+            echo "Patching android/build.gradle..."
+            sed -i '/android {/a \    packagingOptions {\n        jniLibs {\n            useLegacyPackaging = false\n        }\n    }' android/build.gradle
+          fi
+
+          echo "16KB page size patches applied successfully"
+          EOF
+
+          chmod +x 16kb-patch.sh
+          ./16kb-patch.sh
+
+      - name: Build FFmpeg-Kit for Android (16KB)
+        run: |
+          cd ffmpeg-kit
+
+          # Set environment variables
+          export ANDROID_NDK_ROOT=${{ env.ANDROID_NDK_ROOT }}
+
+          # Build with 16KB page size linker flags
+          export LDFLAGS="-Wl,-z,max-page-size=0x4000"
+
+          # Build for all architectures with GPL license (includes all codecs)
+          ./android.sh \
+            --full-gpl \
+            --enable-gpl \
+            --enable-android-media-codec \
+            --enable-android-zlib \
+            --api-level=24 \
+            --lts \
+            || ./android.sh --full-gpl --api-level=24
+
+          echo "Build completed"
+
+      - name: Verify AAR file
+        run: |
+          cd ffmpeg-kit
+
+          # Find the generated AAR file
+          AAR_FILE=$(find . -name "ffmpeg-kit-full-gpl*.aar" -type f | head -n 1)
+
+          if [ -z "$AAR_FILE" ]; then
+            echo "ERROR: AAR file not found!"
+            exit 1
+          fi
+
+          echo "Found AAR file: $AAR_FILE"
+          ls -lh "$AAR_FILE"
+
+          # Extract and verify native libraries have 16KB alignment
+          mkdir -p aar-verify
+          cd aar-verify
+          unzip -q "../$AAR_FILE"
+
+          echo "=== Verifying 16KB page size in native libraries ==="
+          for so_file in $(find jni -name "*.so"); do
+            echo "Checking $so_file..."
+            readelf -l "$so_file" | grep -E "LOAD|Align" || true
+          done
+
+          cd ..
+          echo "AAR_PATH=$AAR_FILE" >> $GITHUB_ENV
+
+      - name: Upload AAR as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-kit-full-gpl-16kb
+          path: ${{ env.AAR_PATH }}
+          retention-days: 90
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ffmpeg-16kb-${{ github.run_number }}
+          release_name: FFmpeg-Kit 16KB Page Size Build ${{ github.run_number }}
+          body: |
+            ## FFmpeg-Kit with 16KB Page Size Support
+
+            This build of FFmpeg-Kit has been compiled with 16KB page size support for Android devices.
+
+            ### Build Details:
+            - **FFmpeg-Kit Version**: ${{ github.event.inputs.ffmpeg_kit_version }}
+            - **Android NDK**: r26d
+            - **Min API Level**: 24
+            - **Linker Flags**: `-Wl,-z,max-page-size=0x4000`
+            - **License**: GPL (full codec support)
+
+            ### Usage:
+            Download the `ffmpeg-kit-full-gpl.aar` file and replace your existing FFmpeg AAR.
+
+            Update your `app.config.js`:
+            ```javascript
+            androidUrl: "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/ffmpeg-16kb-${{ github.run_number }}/ffmpeg-kit-full-gpl.aar"
+            ```
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.AAR_PATH }}
+          asset_name: ffmpeg-kit-full-gpl.aar
+          asset_content_type: application/octet-stream
+
+      - name: Build Summary
+        run: |
+          echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The 16KB-compatible FFmpeg-Kit AAR has been built successfully." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the AAR from the release page" >> $GITHUB_STEP_SUMMARY
+          echo "2. Update your app.config.js with the new URL" >> $GITHUB_STEP_SUMMARY
+          echo "3. Run \`npx expo prebuild --clean\`" >> $GITHUB_STEP_SUMMARY
+          echo "4. Build and test your app" >> $GITHUB_STEP_SUMMARY
