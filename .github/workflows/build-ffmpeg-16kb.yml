@@ -167,13 +167,6 @@ jobs:
             - **Min API Level**: 24
             - **Linker Flags**: `-Wl,-z,max-page-size=0x4000`
             - **License**: GPL (full codec support)
-
-            ### Usage:
-            Download the `ffmpeg-kit-full-gpl.aar` file and replace your existing FFmpeg AAR.
-
-            Update your `app.config.js`:
-            ```javascript
-            androidUrl: "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/ffmpeg-16kb-${{ github.run_number }}/ffmpeg-kit-full-gpl.aar"
             ```
           draft: false
           prerelease: false
@@ -194,8 +187,3 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The 16KB-compatible FFmpeg-Kit AAR has been built successfully." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Download the AAR from the release page" >> $GITHUB_STEP_SUMMARY
-          echo "2. Update your app.config.js with the new URL" >> $GITHUB_STEP_SUMMARY
-          echo "3. Run \`npx expo prebuild --clean\`" >> $GITHUB_STEP_SUMMARY
-          echo "4. Build and test your app" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,5 @@
+# Build output - commit the final AAR manually when ready
+output/
+
+# Docker build cache
+.dockerignore
