@@ -1,5 +1,8 @@
-# Build output - commit the final AAR manually when ready
+# Build output directory (temporary compiled libraries)
 output/
 
-# Docker build cache
-.dockerignore
+# Build process working directory
+build/repackage/
+
+# Log files
+*.log
